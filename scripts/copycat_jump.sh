@@ -15,35 +15,32 @@ TMUX_COPY_MODE="$(tmux_copy_mode)"
 
 _file_number_of_lines() {
 	local file="$1"
-	echo "$(wc -l $file | $AWK_CMD '{print $1}')"
+	wc -l $file | cut -d' ' -f1
 }
 
-_get_result_line() {
+_line_at_index() {
 	local file="$1"
 	local number="$2"
-	echo "$(head -"$number" "$file" | tail -1)"
+	perl -ne "if (\$. == $number) { print; exit }" "$file"
 }
 
-_string_starts_with_digit() {
-	local string="$1"
-	echo "$string" |
-		\grep -q '^[[:digit:]]\+:'
+_starts_with_line_number() {
+	[[ $1 =~ ^[0-9]+: ]]
 }
 
 _get_line_number() {
 	local string="$1"
 	local copycat_file="$2"			# args 2 & 3 used to handle bug in OSX grep
 	local position_number="$3"
-	if _string_starts_with_digit "$string"; then
-		# we have a number!
-		local grep_line_number="$(echo "$string" | cut -f1 -d:)"
+	if _starts_with_line_number "$string"; then
+		local grep_line_number="${string%%:*}"
 		# grep line number index starts from 1, tmux line number index starts from 0
 		local tmux_line_number="$((grep_line_number - 1))"
 	else
 		# no number in the results line This is a bug in OSX grep.
 		# Fetching a number from a previous line.
 		local previous_line_num="$((position_number - 1))"
-		local result_line="$(_get_result_line "$copycat_file" "$previous_line_num")"
+		local result_line="$(_line_at_index "$copycat_file" "$previous_line_num")"
 		# recursively invoke this same function
 		tmux_line_number="$(_get_line_number "$result_line" "$copycat_file" "$previous_line_num")"
 	fi
@@ -53,8 +50,8 @@ _get_line_number() {
 _get_match() {
 	local string="$1"
 	local full_match
-	if _string_starts_with_digit "$string"; then
-		full_match="$(echo "$string" | cut -f2- -d:)"
+	if _starts_with_line_number "$string"; then
+		full_match="${string#*:}"
 	else
 		# This scenario handles OS X grep bug "no number in the results line".
 		# When there's no number at the beginning of the line, we're taking the
@@ -65,35 +62,14 @@ _get_match() {
 	echo -n "$full_match"
 }
 
-_escape_backslash() {
-	local string="$1"
-	echo "$(echo "$string" | sed 's/\\/\\\\/g')"
-}
-
 _get_match_line_position() {
 	local file="$1"
 	local line_number="$2"
 	local match="$3"
-	local adjusted_line_num=$((line_number + 1))
-	local result_line=$(tail -"$adjusted_line_num" "$file" | head -1)
+	local result_line="$(_line_at_index "$file" "$line_number")"
 
-	# OS X awk cannot have `=` as the first char in the variable (bug in awk).
-	# If exists, changing the `=` character with `.` to avoid error.
-	local platform="$(uname)"
-	if [ "$platform" == "Darwin" ]; then
-		result_line="$(echo "$result_line" | sed 's/^=/./')"
-		match="$(echo "$match" | sed 's/^=/./')"
-	fi
-
-	# awk treats \r, \n, \t etc as single characters and that messes up match
-	# highlighting. For that reason, we're escaping backslashes so above chars
-	# are treated literally.
-	result_line="$(_escape_backslash "$result_line")"
-	match="$(_escape_backslash "$match")"
-
-	local index=$($AWK_CMD -v a="$result_line" -v b="$match" 'BEGIN{print index(a,b)}')
-	local zero_index=$((index - 1))
-	echo "$zero_index"
+	perl -le 'my ($search, $line) = @ARGV; print(index($line, $search))' \
+		"$match" "$result_line"
 }
 
 _copycat_jump() {
@@ -252,12 +228,12 @@ do_next_jump() {
 	local copycat_file="$2"
 	local scrollback_file="$3"
 
-	local scrollback_line_number=$(_file_number_of_lines "$scrollback_file")
-	local result_line="$(_get_result_line "$copycat_file" "$position_number")"
+	local scrollback_line_count=$(_file_number_of_lines "$scrollback_file")
+	local result_line="$(_line_at_index "$copycat_file" "$position_number")"
 	local line_number=$(_get_line_number "$result_line" "$copycat_file" "$position_number")
 	local match=$(_get_match "$result_line")
-	local match_line_position=$(_get_match_line_position "$scrollback_file" "$line_number" "$match")
-	_copycat_jump "$line_number" "$match_line_position" "$match" "$scrollback_line_number"
+	local scrollback_match_line_position=$(_get_match_line_position "$scrollback_file" "$((scrollback_line_count - line_number))" "$match")
+	_copycat_jump "$line_number" "$scrollback_match_line_position" "$match" "$scrollback_line_count"
 }
 
 notify_about_first_last_match() {
@@ -268,9 +244,9 @@ notify_about_first_last_match() {
 	# if position didn't change, we are either on a 'first' or 'last' match
 	if [ "$current_position" -eq "$next_position" ]; then
 		if [ "$NEXT_PREV" == "next" ]; then
-			display_message "Last match!" "$message_duration"
+			display_message "last match" "$message_duration"
 		elif [ "$NEXT_PREV" == "prev" ]; then
-			display_message "First match!" "$message_duration"
+			display_message "first match" "$message_duration"
 		fi
 	fi
 }
