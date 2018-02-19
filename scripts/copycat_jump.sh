@@ -68,7 +68,7 @@ _get_match_line_position() {
 	local match="$3"
 	local result_line="$(_line_at_index "$file" "$line_number")"
 
-	perl -le 'my ($search, $line) = @ARGV; print(index($line, $search))' \
+	perl -CA -le 'my ($search, $line) = @ARGV; print(index($line, $search))' \
 		"$match" "$result_line"
 }
 
