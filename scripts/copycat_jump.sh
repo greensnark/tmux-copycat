@@ -21,7 +21,11 @@ _file_number_of_lines() {
 _line_at_index() {
 	local file="$1"
 	local number="$2"
-	perl -ne "if (\$. == $number) { print; exit }" "$file"
+	if (( number < 0 )); then
+		tail -n$((1 - number)) "$file" | head -n1
+	else
+		perl -ne "if (\$. == $number) { print; exit }" "$file"
+	fi
 }
 
 _starts_with_line_number() {
